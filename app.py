@@ -17,6 +17,7 @@ from typing import Dict, List
 import streamlit as st
 
 import sys, os
+import pandas as pd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "scripts"))
 import poomgo
 import sheets
@@ -107,7 +108,7 @@ def load_daily_avg(sheet_id: str, tab: str, sa: dict, days: int = 14) -> Dict[st
 
 
 # ── 화면 ──────────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Even 재고 대시보드", layout="centered")
+st.set_page_config(page_title="Even 재고 대시보드", layout="wide")
 st.title("Even 재고 대시보드")
 
 
@@ -159,27 +160,33 @@ for col, fam in zip(fam_cols, EVEN_FAMILIES):
 
 st.divider()
 st.subheader("품고 입고등록")
-with st.form("receiving"):
-    name = st.text_input("입고명", value=f"Even 입고 {datetime.date.today()}")
-    c1, c2, c3 = st.columns(3)
-    depart = c1.date_input("출고일", value=datetime.date.today())
-    arrive = c2.date_input("도착예정일", value=datetime.date.today())
-    box = c3.number_input("박스 수", min_value=0, value=1, step=1)
+c1, c2, c3 = st.columns(3)
+name = c1.text_input("입고명", value=f"Even 입고 {datetime.date.today()}")
+arrive = c2.date_input("도착예정일", value=datetime.date.today())
+box = c3.number_input("박스 수", min_value=0, value=1, step=1)
 
-    st.markdown("**입고 수량** (0 은 제외)")
-    qty_inputs = {}
-    fam_cols = st.columns(len(EVEN_FAMILIES))      # G2 · R1 · 클립 세로 3열
-    for col, fam in zip(fam_cols, EVEN_FAMILIES):
-        with col:
-            st.markdown(f"**{fam}**")
-            for opt in [o for o in poomgo.EVEN_OPTION_ORDER if _family(o) == fam]:
-                label = opt[len(fam):].strip() or opt   # 그룹명 뺀 짧은 라벨
-                qty_inputs[opt] = st.number_input(label, min_value=0, value=0, step=1, key=f"q_{opt}")
-    submitted = st.form_submit_button("품고에 입고등록")
+# G2 · R1 · 클립 표 3개 나란히 — 각 표에서 입고수량 셀에 직접 입력(+/- 없음)
+edited = {}
+qty_conf = {"입고수량": st.column_config.NumberColumn("입고수량", min_value=0, step=1)}
+in_cols = st.columns(len(EVEN_FAMILIES))
+for col, fam in zip(in_cols, EVEN_FAMILIES):
+    with col:
+        st.markdown(f"**{fam}**")
+        opts = [o for o in poomgo.EVEN_OPTION_ORDER if _family(o) == fam]
+        df = pd.DataFrame({"품목명": [o[len(fam):].strip() or o for o in opts],
+                           "_opt": opts, "입고수량": [0] * len(opts)})
+        ed = st.data_editor(df, key=f"ed_{fam}", hide_index=True, use_container_width=True,
+                            column_config=qty_conf, disabled=["품목명"],
+                            column_order=["품목명", "입고수량"])
+        edited[fam] = ed
 
-if submitted:
-    resources = [{"barcode": poomgo.EVEN_CODE_BY_OPTION[opt], "quantity": int(q)}
-                 for opt, q in qty_inputs.items() if int(q) > 0]
+if st.button("저장", type="primary"):
+    resources = []
+    for fam, ed in edited.items():
+        for _, row in ed.iterrows():
+            q = int(row["입고수량"] or 0)
+            if q > 0:
+                resources.append({"barcode": poomgo.EVEN_CODE_BY_OPTION[row["_opt"]], "quantity": q})
     if not resources:
         st.error("입고 수량을 하나 이상 입력하세요.")
     else:
@@ -187,7 +194,7 @@ if submitted:
         try:
             poomgo.create_receiving(
                 cfg["token"], name=name,
-                depart_at=str(depart), arrive_at=str(arrive),
+                depart_at=str(datetime.date.today()), arrive_at=str(arrive),
                 schedule_form_code_key=recv.get("schedule_form_code_key", ""),
                 delivery_type=recv.get("delivery_type", ""),
                 pallet_count=0, box_count=int(box),
