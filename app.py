@@ -122,6 +122,11 @@ def _family(opt: str) -> str:
 
 EVEN_FAMILIES = ["G2", "R1", "클립"]
 
+
+def _tbl_height(n_rows: int) -> int:
+    """행 수만큼 높이를 줘서 표 내부 스크롤이 안 생기게 한다(헤더 + 행*35)."""
+    return (n_rows + 1) * 35 + 3
+
 cfg = _cfg()
 if not cfg["token"] or not cfg["sheet_id"]:
     st.error("secrets 에 [poomgo] token 과 [even] sheet_id 를 설정하세요.")
@@ -156,7 +161,8 @@ fam_cols = st.columns(len(EVEN_FAMILIES))       # G2 · R1 · 클립 표 3개 �
 for col, fam in zip(fam_cols, EVEN_FAMILIES):
     with col:
         st.markdown(f"**{fam}**")
-        st.dataframe(_family_rows(fam), use_container_width=True, hide_index=True)
+        fr = _family_rows(fam)
+        st.dataframe(fr, use_container_width=True, hide_index=True, height=_tbl_height(len(fr)))
 
 st.divider()
 st.subheader("품고 입고등록")
@@ -177,7 +183,7 @@ for col, fam in zip(in_cols, EVEN_FAMILIES):
                            "_opt": opts, "입고수량": [0] * len(opts)})
         ed = st.data_editor(df, key=f"ed_{fam}", hide_index=True, use_container_width=True,
                             column_config=qty_conf, disabled=["품목명"],
-                            column_order=["품목명", "입고수량"])
+                            column_order=["품목명", "입고수량"], height=_tbl_height(len(opts)))
         edited[fam] = ed
 
 if st.button("저장", type="primary"):
