@@ -139,14 +139,23 @@ except Exception as e:
 
 st.caption(f"품고 재고 수집: {stamp or '아직 없음'}  ·  일평균 출고량: 매출 탭 최근 14일 기준")
 
-rows = []
-for opt in poomgo.EVEN_OPTION_ORDER:
-    qty = stock.get(opt, 0)
-    a = avg.get(opt, 0.0)
-    days_left = round(qty / a, 1) if a > 0 else None
-    rows.append({"품목(옵션)": opt, "재고수량": qty, "일평균 출고량": a,
-                 "소진 예상일수": days_left if days_left is not None else "—"})
-st.dataframe(rows, use_container_width=True, hide_index=True)
+def _family_rows(fam: str):
+    out = []
+    for opt in poomgo.EVEN_OPTION_ORDER:
+        if _family(opt) != fam:
+            continue
+        qty = stock.get(opt, 0)
+        a = avg.get(opt, 0.0)
+        days_left = round(qty / a, 1) if a > 0 else None
+        out.append({"품목": opt[len(fam):].strip() or opt, "재고": qty,
+                    "일평균": a, "소진일수": days_left if days_left is not None else "—"})
+    return out
+
+fam_cols = st.columns(len(EVEN_FAMILIES))       # G2 · R1 · 클립 표 3개 나란히
+for col, fam in zip(fam_cols, EVEN_FAMILIES):
+    with col:
+        st.markdown(f"**{fam}**")
+        st.dataframe(_family_rows(fam), use_container_width=True, hide_index=True)
 
 st.divider()
 st.subheader("품고 입고등록")
