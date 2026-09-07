@@ -186,7 +186,8 @@ for col, fam in zip(in_cols, EVEN_FAMILIES):
                             column_order=["품목명", "입고수량"], height=_tbl_height(len(opts)))
         edited[fam] = ed
 
-if st.button("저장", type="primary"):
+_sp, _btn = st.columns([6, 1])       # 우하단으로 밀기
+if _btn.button("저장", type="primary", use_container_width=True):
     resources = []
     for fam, ed in edited.items():
         for _, row in ed.iterrows():
