@@ -224,15 +224,25 @@ except Exception as e:
 
 if not recvs:
     st.caption("Even 입고내역 없음")
+def _grouped_items(resources) -> str:
+    by_fam = {}
+    for x in resources or []:
+        opt = poomgo.EVEN_SKU_BY_CODE.get(str(x.get("barcode", "")).strip())
+        if not opt:
+            continue
+        fam = _family(opt)
+        label = opt[len(fam):].strip() or opt
+        by_fam.setdefault(fam, []).append(f"{label} [{x.get('quantity')}]")
+    lines = [f"**{fam}**　" + "　|　".join(by_fam[fam]) for fam in EVEN_FAMILIES if fam in by_fam]
+    return "  \n".join(lines)
+
 for r in recvs:
     rid = r.get("id")
-    items = ", ".join(
-        f"{poomgo.EVEN_SKU_BY_CODE.get(str(x.get('barcode','')).strip(), x.get('barcode'))}×{x.get('quantity')}"
-        for x in (r.get("resources") or []))
     status = r.get("status", "")
     when = str(r.get("arrive_at") or "")[:10]
     c1, c2 = st.columns([5, 1])
-    c1.markdown(f"**{r.get('name') or r.get('code') or rid}**  ·  {status}  ·  {when}  \n{items}")
+    c1.markdown(f"**{r.get('name') or r.get('code') or rid}**  ·  {status}  ·  {when}  \n"
+                + _grouped_items(r.get("resources")))
     if status not in ("completed", "canceled", "cancelled"):
         if c2.button("취소", key=f"cancel_{rid}"):
             try:
