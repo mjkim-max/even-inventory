@@ -159,13 +159,13 @@ with st.form("receiving"):
 
     st.markdown("**입고 수량** (0 은 제외)")
     qty_inputs = {}
-    for fam in EVEN_FAMILIES:
-        opts = [o for o in poomgo.EVEN_OPTION_ORDER if _family(o) == fam]
-        st.markdown(f"**{fam}**")
-        cols = st.columns(len(opts))
-        for col, opt in zip(cols, opts):
-            label = opt[len(fam):].strip() or opt      # 그룹명 뺀 짧은 라벨
-            qty_inputs[opt] = col.number_input(label, min_value=0, value=0, step=1, key=f"q_{opt}")
+    fam_cols = st.columns(len(EVEN_FAMILIES))      # G2 · R1 · 클립 세로 3열
+    for col, fam in zip(fam_cols, EVEN_FAMILIES):
+        with col:
+            st.markdown(f"**{fam}**")
+            for opt in [o for o in poomgo.EVEN_OPTION_ORDER if _family(o) == fam]:
+                label = opt[len(fam):].strip() or opt   # 그룹명 뺀 짧은 라벨
+                qty_inputs[opt] = st.number_input(label, min_value=0, value=0, step=1, key=f"q_{opt}")
     submitted = st.form_submit_button("품고에 입고등록")
 
 if submitted:
