@@ -88,11 +88,15 @@ def create_receiving(token: str, *, name: str, depart_at: str, arrive_at: str,
                      destination_warehouse: str,
                      resources: List[Dict[str, Any]]) -> Dict[str, Any]:
     """입고등록(입고예정서 생성). resources = [{code, quantity, ...}] 형식."""
+    # 창고 코드가 비었거나 'null'이면 실제 null 로 보낸다(PLAUD 계정과 동일 구조)
+    dw = destination_warehouse
+    if not dw or str(dw).strip().lower() in ("null", "none"):
+        dw = None
     payload = {
         "name": name, "depart_at": depart_at, "arrive_at": arrive_at,
         "schedule_form_code_key": schedule_form_code_key, "delivery_type": delivery_type,
         "pallet_count": pallet_count, "box_count": box_count,
-        "destination_warehouse": destination_warehouse, "resources": resources,
+        "destination_warehouse": dw, "resources": resources,
     }
     return _post(token, "/receiving-sheets", payload, method="PUT", timeout=180)
 

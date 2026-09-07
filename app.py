@@ -155,7 +155,7 @@ with st.form("receiving"):
     submitted = st.form_submit_button("품고에 입고등록")
 
 if submitted:
-    resources = [{"code": poomgo.EVEN_CODE_BY_OPTION[opt], "quantity": int(q)}
+    resources = [{"barcode": poomgo.EVEN_CODE_BY_OPTION[opt], "quantity": int(q)}
                  for opt, q in qty_inputs.items() if int(q) > 0]
     if not resources:
         st.error("입고 수량을 하나 이상 입력하세요.")
