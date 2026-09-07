@@ -49,10 +49,33 @@ def _post(token: str, path: str, body: dict, method: str = "POST", timeout: int 
     return resp.json() if resp.text else {}
 
 
+def _get(token: str, path: str, params: dict, timeout: int = 30) -> Any:
+    url = f"{BASE}{path}"
+    resp = requests.get(url, headers=_headers(token), params=params, timeout=timeout)
+    if resp.status_code in (401, 403) and not token.lower().startswith("bearer "):
+        resp = requests.get(url, headers=_headers(f"Bearer {token}"), params=params, timeout=timeout)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"poomgo GET {path} -> {resp.status_code}: {resp.text[:200]}")
+    return resp.json() if resp.text else {}
+
+
 def list_resources(token: str) -> List[Dict[str, Any]]:
     """등록된 전체 SKU 목록(재고 유무 무관)."""
     data = _post(token, "/resources", {"page": 1, "pageSize": 200})
     return data.get("rows") or data.get("collection") or []
+
+
+def list_receivings(token: str, page_size: int = 50) -> List[Dict[str, Any]]:
+    """최근 입고예정서 목록 — Even SKU 가 포함된 건만 최신순으로."""
+    data = _get(token, "/receiving-sheets", {"page": 1, "pageSize": page_size})
+    rows = data.get("rows") or data.get("collection") or []
+    even = set(EVEN_SKU_BY_CODE.keys())
+    out = []
+    for r in rows:
+        res = r.get("resources") or []
+        if any(str(x.get("barcode", "")).strip() in even for x in res):
+            out.append(r)
+    return out
 
 
 def fetch_stock(token: str) -> Dict[str, int]:

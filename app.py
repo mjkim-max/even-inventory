@@ -107,8 +107,19 @@ def load_daily_avg(sheet_id: str, tab: str, sa: dict, days: int = 14) -> Dict[st
 
 
 # ── 화면 ──────────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Even 재고 대시보드", layout="wide")
+st.set_page_config(page_title="Even 재고 대시보드", layout="centered")
 st.title("Even 재고 대시보드")
+
+
+def _family(opt: str) -> str:
+    if opt.startswith("G2 "):
+        return "G2"
+    if opt.startswith("클립 "):
+        return "클립"
+    return "R1"
+
+
+EVEN_FAMILIES = ["G2", "R1", "클립"]
 
 cfg = _cfg()
 if not cfg["token"] or not cfg["sheet_id"]:
@@ -140,18 +151,21 @@ st.dataframe(rows, use_container_width=True, hide_index=True)
 st.divider()
 st.subheader("품고 입고등록")
 with st.form("receiving"):
-    name = st.text_input("입고명(name)", value=f"Even 입고 {datetime.date.today()}")
-    c1, c2 = st.columns(2)
-    depart = c1.date_input("출고일(depart_at)", value=datetime.date.today())
-    arrive = c2.date_input("도착예정일(arrive_at)", value=datetime.date.today())
-    c3, c4 = st.columns(2)
-    pallet = c3.number_input("파렛트 수", min_value=0, value=0, step=1)
-    box = c4.number_input("박스 수", min_value=0, value=1, step=1)
-    st.markdown("**입고 수량** (0 은 제외됩니다)")
+    name = st.text_input("입고명", value=f"Even 입고 {datetime.date.today()}")
+    c1, c2, c3 = st.columns(3)
+    depart = c1.date_input("출고일", value=datetime.date.today())
+    arrive = c2.date_input("도착예정일", value=datetime.date.today())
+    box = c3.number_input("박스 수", min_value=0, value=1, step=1)
+
+    st.markdown("**입고 수량** (0 은 제외)")
     qty_inputs = {}
-    cols = st.columns(4)
-    for i, opt in enumerate(poomgo.EVEN_OPTION_ORDER):
-        qty_inputs[opt] = cols[i % 4].number_input(opt, min_value=0, value=0, step=1, key=f"q_{opt}")
+    for fam in EVEN_FAMILIES:
+        opts = [o for o in poomgo.EVEN_OPTION_ORDER if _family(o) == fam]
+        st.markdown(f"**{fam}**")
+        cols = st.columns(len(opts))
+        for col, opt in zip(cols, opts):
+            label = opt[len(fam):].strip() or opt      # 그룹명 뺀 짧은 라벨
+            qty_inputs[opt] = col.number_input(label, min_value=0, value=0, step=1, key=f"q_{opt}")
     submitted = st.form_submit_button("품고에 입고등록")
 
 if submitted:
@@ -162,16 +176,47 @@ if submitted:
     else:
         recv = cfg["recv"]
         try:
-            res = poomgo.create_receiving(
-                cfg["token"],
-                name=name,
+            poomgo.create_receiving(
+                cfg["token"], name=name,
                 depart_at=str(depart), arrive_at=str(arrive),
                 schedule_form_code_key=recv.get("schedule_form_code_key", ""),
                 delivery_type=recv.get("delivery_type", ""),
-                pallet_count=int(pallet), box_count=int(box),
+                pallet_count=0, box_count=int(box),
                 destination_warehouse=recv.get("destination_warehouse", ""),
                 resources=resources,
             )
-            st.success(f"입고등록 완료: {res}")
+            st.success("입고등록 완료")
+            st.cache_data.clear()
+            st.rerun()
         except Exception as e:
             st.error(f"입고등록 실패: {e}")
+
+st.divider()
+st.subheader("최근 입고내역")
+try:
+    recvs = poomgo.list_receivings(cfg["token"], page_size=50)[:15]
+except Exception as e:
+    recvs = []
+    st.warning(f"입고내역을 못 읽었습니다: {e}")
+
+if not recvs:
+    st.caption("Even 입고내역 없음")
+for r in recvs:
+    rid = r.get("id")
+    items = ", ".join(
+        f"{poomgo.EVEN_SKU_BY_CODE.get(str(x.get('barcode','')).strip(), x.get('barcode'))}×{x.get('quantity')}"
+        for x in (r.get("resources") or []))
+    status = r.get("status", "")
+    when = str(r.get("arrive_at") or "")[:10]
+    c1, c2 = st.columns([5, 1])
+    c1.markdown(f"**{r.get('name') or r.get('code') or rid}**  ·  {status}  ·  {when}  \n{items}")
+    if status not in ("completed", "canceled", "cancelled"):
+        if c2.button("취소", key=f"cancel_{rid}"):
+            try:
+                poomgo.cancel_receiving(cfg["token"], str(rid))
+                st.success(f"취소됨: {rid}")
+                st.rerun()
+            except Exception as e:
+                st.error(f"취소 실패: {e}")
+    else:
+        c2.caption(status)
