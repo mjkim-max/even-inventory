@@ -236,20 +236,21 @@ def _grouped_items(resources) -> str:
     lines = [f"**{fam}**　" + "　|　".join(by_fam[fam]) for fam in EVEN_FAMILIES if fam in by_fam]
     return "  \n".join(lines)
 
+_even = poomgo.EVEN_SKU_BY_CODE
 for r in recvs:
     rid = r.get("id")
     status = r.get("status", "")
     when = str(r.get("arrive_at") or "")[:10]
-    c1, c2 = st.columns([5, 1])
-    c1.markdown(f"**{r.get('name') or r.get('code') or rid}**  ·  {status}  ·  {when}  \n"
-                + _grouped_items(r.get("resources")))
-    if status not in ("completed", "canceled", "cancelled"):
-        if c2.button("취소", key=f"cancel_{rid}"):
-            try:
-                poomgo.cancel_receiving(cfg["token"], str(rid))
-                st.success(f"취소됨: {rid}")
-                st.rerun()
-            except Exception as e:
-                st.error(f"취소 실패: {e}")
-    else:
-        c2.caption(status)
+    total = sum(int(x.get("quantity") or 0) for x in (r.get("resources") or [])
+                if str(x.get("barcode", "")).strip() in _even)
+    title = f"{when}　·　{r.get('name') or r.get('code') or rid}　·　{status}　·　총 {total}개"
+    with st.expander(title):
+        st.markdown(_grouped_items(r.get("resources")))
+        if status not in ("completed", "canceled", "cancelled"):
+            if st.button("이 입고 취소", key=f"cancel_{rid}", type="secondary"):
+                try:
+                    poomgo.cancel_receiving(cfg["token"], str(rid))
+                    st.success(f"취소됨: {rid}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"취소 실패: {e}")
