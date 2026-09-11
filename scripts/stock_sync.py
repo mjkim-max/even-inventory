@@ -6,7 +6,7 @@
   GSHEET_SA_TOML/KEY    서비스 계정 (ring_verify 와 동일 재사용)
 
 '품고재고' 탭(wide): [수집시각, R1 6, ..., 클립 B 그린] = 총재고 — 실행마다 한 행 추가.
-'출고후재고' 탭: 같은 구조로 출고 후 예상재고(총재고 - 미출고 할당) 스냅샷.
+'출고후재고' 탭: 같은 구조로 가용재고(총재고 - 미출고 주문) 스냅샷.
 앱은 평소 품고 API 를 실시간으로 읽고, 이 탭들은 추이·폴백용이다.
 """
 from __future__ import annotations
@@ -16,6 +16,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+import orders
 import poomgo
 import sheets
 
@@ -28,12 +29,20 @@ def main() -> None:
     token = os.environ.get("POOMGO_TOKEN") or sys.exit("ERROR: POOMGO_TOKEN 미설정")
     sheet_id = os.environ.get("EVEN_SHEET_ID") or sys.exit("ERROR: EVEN_SHEET_ID 미설정")
 
-    stock, pending, expected = poomgo.fetch_stock_all(token)
+    stock = poomgo.fetch_stock(token)
+    try:
+        pending = orders.pending_out(sheet_id)
+    except Exception as e:                       # 주문 탭이 깨져도 총재고 스냅샷은 남긴다
+        print(f"WARN 미출고 주문 집계 실패 — 출고후재고 탭 건너뜀: {e}")
+        pending = None
+    expected = ({o: stock[o] - (pending.get(o, 0)) for o in poomgo.EVEN_OPTION_ORDER}
+                if pending is not None else None)
     stamp = datetime.datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
 
     sh = sheets.open_sheet(sheet_id)
     headers = ["수집시각"] + poomgo.EVEN_OPTION_ORDER
-    for tab, data in ((STOCK_TAB, stock), (EXPECTED_TAB, expected)):
+    tabs = [(STOCK_TAB, stock)] + ([(EXPECTED_TAB, expected)] if expected is not None else [])
+    for tab, data in tabs:
         ws = sheets.get_or_create_tab(sh, tab, headers)
         # 헤더가 비어 있으면(빈 탭) 채운다
         if not (ws.row_values(1) or []):
@@ -42,7 +51,8 @@ def main() -> None:
         ws.append_row(row, value_input_option="USER_ENTERED")
 
     print(f"[{stamp}] 스냅샷 기록 — 총재고 {sum(stock.values())}개 / "
-          f"미출고 {sum(pending.values())}개 / 출고후 {sum(expected.values())}개 / SKU {len(stock)}종")
+          f"미출고 {sum(pending.values()) if pending else '—'}개 / "
+          f"가용 {sum(expected.values()) if expected else '—'}개 / SKU {len(stock)}종")
 
 
 if __name__ == "__main__":

@@ -1,13 +1,13 @@
 """품고(Poomgo) WMS Open API 클라이언트 — Even 전용.
 
   재고조회  POST /open-api/wms/resources/quantity-at   (시점 총재고, 재고 있는 것만)
-  재고변동  POST /open-api/wms/operations              (IN/OUT/MV 원장 — 미출고 할당 계산용)
   SKU목록   POST /open-api/wms/resources               (전체 등록 SKU)
   입고등록  PUT  /open-api/wms/receiving-sheets
   입고취소  DELETE /open-api/wms/receiving-sheets/{id}
 
-품고 화면의 '출고 후 예상재고' = 총재고 - 미출고 할당.
-미출고 할당 = operations 의 OUT 중 created_at(출고지시) <= 지금 < execute_at(실제출고).
+이 API 로는 '가용재고'·'출고 후 예상재고'를 못 받는다. quantity-at 은 로케이션 실물(총재고)뿐이고,
+/wms/operations(재고변동)는 실제 출고가 끝난 뒤에야 행이 생긴다(2026-09-11 실측).
+미출고 차감은 주문 시트 기준 — scripts/orders.py 참고.
 
 토큰은 코드에 넣지 않는다 — 환경변수 POOMGO_TOKEN 또는 secrets 로 주입.
 """
@@ -115,49 +115,6 @@ def fetch_stock(token: str) -> Dict[str, int]:
         except (TypeError, ValueError):
             pass
     return stock
-
-
-def fetch_pending_out(token: str, days: int = 10) -> Dict[str, int]:
-    """Even 옵션키 → 미출고 할당 수량(출고 지시는 났고 아직 안 나간 것).
-
-    품고 SKU별재고조회 화면의 (총재고 - 출고 후 예상재고) 와 같은 값.
-    Even 실측 기준 지시→출고 간격 중앙값 12.8시간, 최대 41시간이라 days=10 이면 충분.
-    """
-    now = _utcnow()
-    cut = now.strftime("%Y-%m-%dT%H:%M:%S")
-    window = {"$gte": (now - datetime.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S"),
-              "$lte": (now + datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")}
-    pending = {opt: 0 for opt in EVEN_OPTION_ORDER}
-    page, seen, total = 1, 0, None
-    while True:
-        data = _post(token, "/operations",
-                     {"page": page, "pageSize": 200, "createdAt": window})
-        rows = data.get("rows") or []
-        if total is None:
-            total = int(data.get("total") or 0)
-        for it in rows:
-            if it.get("type") != "OUT":
-                continue
-            opt = EVEN_SKU_BY_CODE.get(str(it.get("resource_code", "")).strip())
-            if not opt:
-                continue
-            created = str(it.get("created_at") or "")[:19]
-            executed = str(it.get("execute_at") or "")[:19] or "9999"
-            if created <= cut < executed:            # 지시됨 + 아직 미출고
-                pending[opt] += int(it.get("quantity") or 0)
-        seen += len(rows)
-        if not rows or seen >= total:
-            break
-        page += 1
-    return pending
-
-
-def fetch_stock_all(token: str):
-    """(총재고, 미출고할당, 출고 후 예상재고) 3종을 한 번에."""
-    total = fetch_stock(token)
-    pending = fetch_pending_out(token)
-    expected = {o: total.get(o, 0) - pending.get(o, 0) for o in EVEN_OPTION_ORDER}
-    return total, pending, expected
 
 
 def create_receiving(token: str, *, name: str, depart_at: str, arrive_at: str,

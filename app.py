@@ -1,6 +1,8 @@
 """Even 재고 대시보드 (Streamlit).
 
-  재고수량      ← 품고 API 실시간(총재고 / 출고 후 예상재고), 실패 시 품고재고 탭 스냅샷
+  총재고        ← 품고 API 실시간(quantity-at)
+  미출고 주문    ← 주문캐시·Cafe24주문 탭에서 아직 안 나간 주문 (scripts/orders.py)
+  재고(가용)     = 총재고 - 미출고 주문
   일평균 출고량  ← 기존 Even 스프레드시트 '매출' 탭 (최근 N일 판매량 평균)
   입고등록      → 품고 receiving-sheets API
 
@@ -19,6 +21,7 @@ import streamlit as st
 import sys, os
 import pandas as pd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "scripts"))
+import orders
 import poomgo
 import sheets
 
@@ -71,9 +74,15 @@ def load_stock(sheet_id: str, tab: str, sa: dict):
 
 
 @st.cache_data(ttl=120)
-def load_live_stock(token: str):
-    """품고 API 실시간 — (총재고, 미출고할당, 출고 후 예상재고)."""
-    return poomgo.fetch_stock_all(token)
+def load_total_stock(token: str):
+    """품고 API 실시간 총재고."""
+    return poomgo.fetch_stock(token)
+
+
+@st.cache_data(ttl=120)
+def load_pending(sheet_id: str, sa: dict):
+    """주문 시트 기준 미출고 주문 수량."""
+    return orders.pending_out(sheet_id, sa or None)
 
 
 @st.cache_data(ttl=300)
@@ -139,18 +148,23 @@ if not cfg["token"] or not cfg["sheet_id"]:
     st.stop()
 
 total_stock, pending, stock = {}, {}, {}
-stamp, live = "", False
+stamp, live, has_pending = "", False, False
 try:
-    total_stock, pending, stock = load_live_stock(cfg["token"])
+    total_stock = load_total_stock(cfg["token"])
     stamp = datetime.datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
     live = True
 except Exception as e:
     st.warning(f"품고 API 실시간 조회 실패 — 스냅샷으로 대체합니다: {e}")
     try:
         total_stock, stamp = load_stock(cfg["sheet_id"], cfg["poomgo_tab"], cfg["sa"])
-        stock = dict(total_stock)
     except Exception as e2:
         st.warning(f"품고재고 탭도 못 읽었습니다: {e2}")
+try:
+    pending = load_pending(cfg["sheet_id"], cfg["sa"])
+    has_pending = True
+except Exception as e:
+    st.warning(f"미출고 주문을 못 읽었습니다 — 총재고만 표시합니다: {e}")
+stock = {o: total_stock.get(o, 0) - pending.get(o, 0) for o in poomgo.EVEN_OPTION_ORDER}
 try:
     avg = load_daily_avg(cfg["sheet_id"], cfg["sales_tab"], cfg["sa"])
 except Exception as e:
@@ -158,7 +172,8 @@ except Exception as e:
     st.warning(f"매출 탭을 못 읽었습니다: {e}")
 
 _src = "품고 API 실시간" if live else "품고재고 탭 스냅샷"
-st.caption(f"{_src} · {stamp or '아직 없음'}　|　**재고 = 출고 후 예상재고**(총재고 − 출고지시 났고 아직 안 나간 수량)"
+_pen = "주문캐시·Cafe24주문 기준" if has_pending else "**집계 실패 — 총재고와 같음**"
+st.caption(f"총재고: {_src} · {stamp or '아직 없음'}　|　**재고 = 총재고 − 미출고 주문**({_pen})"
            f"　|　일평균 출고량: 매출 탭 최근 14일 기준")
 
 def _family_rows(fam: str):
@@ -166,16 +181,13 @@ def _family_rows(fam: str):
     for opt in poomgo.EVEN_OPTION_ORDER:
         if _family(opt) != fam:
             continue
-        qty = stock.get(opt, 0)                       # 출고 후 예상재고
+        qty = stock.get(opt, 0)                       # 총재고 - 미출고 주문
         a = avg.get(opt, 0.0)
         days_left = round(qty / a, 1) if a > 0 else None
-        row = {"품목": opt[len(fam):].strip() or opt, "재고": qty}
-        if live:
-            row["총재고"] = total_stock.get(opt, 0)
-            row["미출고"] = pending.get(opt, 0)
-        row["일평균"] = a
-        row["소진일수"] = days_left if days_left is not None else "—"
-        out.append(row)
+        out.append({"품목": opt[len(fam):].strip() or opt, "재고": qty,
+                    "총재고": total_stock.get(opt, 0), "미출고": pending.get(opt, 0),
+                    "일평균": a,
+                    "소진일수": days_left if days_left is not None else "—"})
     return out
 
 fam_cols = st.columns(len(EVEN_FAMILIES))       # G2 · R1 · 클립 표 3개 나란히
