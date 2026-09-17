@@ -212,39 +212,44 @@ except Exception as e:
     pos = []
     st.warning(f"발주(PO) 탭을 못 읽었습니다: {e}")
 
+PO_SLOTS = 3                     # 발주일 오래된 순 3건까지만 표시(4번째부터 생략)
+slots = pos[:PO_SLOTS] + [None] * (PO_SLOTS - len(pos[:PO_SLOTS]))
+st.caption("현재재고 = 가용(총재고 − 미출고) · 입고후재고 = 현재재고 + 앞 차수까지 누적 입고 · "
+           "발주(PO) 탭에서 입고여부가 '입고'가 아닌 PO를 발주일 순으로 최대 3건"
+           + (f" · 미입고 PO {len(pos)}건 중 4번째부터 생략" if len(pos) > PO_SLOTS else ""))
 
-def _po_label(p) -> str:
-    """표 열 이름 = PO명. 같은 이름이 또 있으면 번호를 붙여 열이 겹치지 않게 한다."""
-    name = p["PO명"] or f"#{p['번호']}"
-    if sum(1 for q in pos if (q["PO명"] or f"#{q['번호']}") == name) > 1:
-        name = f"{name} (#{p['번호']})"
-    return name
+# 네 표의 행을 똑같이 맞춘다: 가족(G2·R1·클립) 순, 가족 이름은 첫 행에만.
+opt_rows = [(fam, o) for fam in EVEN_FAMILIES
+            for o in poomgo.EVEN_OPTION_ORDER if _family(o) == fam]
+t_now, t_po = [], [[] for _ in range(PO_SLOTS)]
+prev_fam = None
+for fam, o in opt_rows:
+    cur = stock.get(o, 0)
+    t_now.append({"구분": fam if fam != prev_fam else "",
+                  "품목": o[len(fam):].strip() or o, "현재재고": cur})
+    prev_fam = fam
+    acc = cur
+    for i, p in enumerate(slots):
+        q = p["수량"].get(o) if p else None
+        if q:
+            acc += q
+            t_po[i].append({"발주수량": q, "입고후재고": acc})
+        else:                          # PO 없음 / 이 품목 발주 없음 → 둘 다 빈칸
+            t_po[i].append({"발주수량": None, "입고후재고": None})
 
-
-if not pos:
-    st.caption("미입고 PO 없음 (발주(PO) 탭 입고여부가 '입고'가 아닌 PO 기준)")
-else:
-    st.caption("발주(PO) 탭에서 입고여부가 '입고'가 아닌 PO — 차수별로 따로 표시(합산 안 함). "
-               "열 이름 = PO명")
-    for fam in EVEN_FAMILIES:
-        opts = [o for o in poomgo.EVEN_OPTION_ORDER if _family(o) == fam]
-        fam_pos = [p for p in pos if any(p["수량"].get(o) for o in opts)]
-        if not fam_pos:
-            continue
-        st.markdown(f"**{fam}**")
-        rows = []
-        for o in opts:
-            row = {"품목": o[len(fam):].strip() or o}
-            for p in fam_pos:
-                row[_po_label(p)] = p["수량"].get(o) or None
-            rows.append(row)
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
-                     height=_tbl_height(len(rows)))
-    with st.expander("PO 목록"):
-        st.dataframe(pd.DataFrame([{"PO명": _po_label(p), "발주일": p["날짜"],
-                                    "수량": sum(p["수량"].values()), "비고": p["비고"]}
-                                   for p in pos]),
-                     use_container_width=True, hide_index=True)
+h = _tbl_height(len(opt_rows))
+c0, *c_po = st.columns([3, 2, 2, 2])
+with c0:
+    st.markdown("**현재**")
+    st.dataframe(pd.DataFrame(t_now), use_container_width=True, hide_index=True, height=h)
+for col, p, rows in zip(c_po, slots, t_po):
+    with col:
+        st.markdown(f"**{p['PO명'] or '#' + p['번호']}**" if p else "**—**")
+        # 빈칸은 None 이 그대로 찍히지 않게 문자열로 비운다
+        df = pd.DataFrame(rows, columns=["발주수량", "입고후재고"])
+        df = df.apply(lambda c: c.map(lambda v: "" if v is None or pd.isna(v) else f"{int(v):,}"))
+        st.dataframe(df, use_container_width=True, hide_index=True, height=h,
+                     column_config={k: st.column_config.TextColumn(k) for k in df.columns})
 
 st.divider()
 st.subheader("품고 입고등록")
