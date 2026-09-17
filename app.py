@@ -214,15 +214,18 @@ except Exception as e:
 
 
 def _po_label(p) -> str:
-    d = p["날짜"][5:].replace("-", "/") if len(p["날짜"]) >= 10 else p["날짜"]
-    return f"#{p['번호']} {d}"
+    """표 열 이름 = PO명. 같은 이름이 또 있으면 번호를 붙여 열이 겹치지 않게 한다."""
+    name = p["PO명"] or f"#{p['번호']}"
+    if sum(1 for q in pos if (q["PO명"] or f"#{q['번호']}") == name) > 1:
+        name = f"{name} (#{p['번호']})"
+    return name
 
 
 if not pos:
     st.caption("미입고 PO 없음 (발주(PO) 탭 입고여부가 '입고'가 아닌 PO 기준)")
 else:
     st.caption("발주(PO) 탭에서 입고여부가 '입고'가 아닌 PO — 차수별로 따로 표시(합산 안 함). "
-               "열 이름 = #번호 발주일")
+               "열 이름 = PO명")
     for fam in EVEN_FAMILIES:
         opts = [o for o in poomgo.EVEN_OPTION_ORDER if _family(o) == fam]
         fam_pos = [p for p in pos if any(p["수량"].get(o) for o in opts)]
@@ -238,7 +241,7 @@ else:
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
                      height=_tbl_height(len(rows)))
     with st.expander("PO 목록"):
-        st.dataframe(pd.DataFrame([{"차수": _po_label(p), "PO명": p["PO명"],
+        st.dataframe(pd.DataFrame([{"PO명": _po_label(p), "발주일": p["날짜"],
                                     "수량": sum(p["수량"].values()), "비고": p["비고"]}
                                    for p in pos]),
                      use_container_width=True, hide_index=True)
