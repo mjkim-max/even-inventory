@@ -131,7 +131,12 @@ def load_daily_avg(sheet_id: str, tab: str, sa: dict, days: int = 14) -> Dict[st
 
 # ── 화면 ──────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Even 재고 대시보드", layout="wide")
-st.title("Even 재고 대시보드")
+_t, _r = st.columns([6, 1])
+_t.title("Even 재고 대시보드")
+# 캐시(총재고·미출고 2분, PO·매출 5분)를 비우고 시트·품고를 바로 다시 읽는다
+if _r.button("새로고침", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
 
 
 def _family(opt: str) -> str:
