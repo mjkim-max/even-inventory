@@ -22,6 +22,7 @@ import sys, os
 import pandas as pd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "scripts"))
 import orders
+import po
 import poomgo
 import sheets
 
@@ -77,6 +78,12 @@ def load_stock(sheet_id: str, tab: str, sa: dict):
 def load_total_stock(token: str):
     """품고 API 실시간 총재고."""
     return poomgo.fetch_stock(token)
+
+
+@st.cache_data(ttl=300)
+def load_incoming(sheet_id: str, sa: dict):
+    """발주(PO) 탭 — 미입고 PO 차수별 수량."""
+    return po.incoming(sheet_id, sa or None, valid=poomgo.EVEN_OPTION_ORDER)
 
 
 @st.cache_data(ttl=120)
@@ -196,6 +203,45 @@ for col, fam in zip(fam_cols, EVEN_FAMILIES):
         st.markdown(f"**{fam}**")
         fr = _family_rows(fam)
         st.dataframe(fr, use_container_width=True, hide_index=True, height=_tbl_height(len(fr)))
+
+st.divider()
+st.subheader("입고 예정 (미입고 PO)")
+try:
+    pos = load_incoming(cfg["sheet_id"], cfg["sa"])
+except Exception as e:
+    pos = []
+    st.warning(f"발주(PO) 탭을 못 읽었습니다: {e}")
+
+
+def _po_label(p) -> str:
+    d = p["날짜"][5:].replace("-", "/") if len(p["날짜"]) >= 10 else p["날짜"]
+    return f"#{p['번호']} {d}"
+
+
+if not pos:
+    st.caption("미입고 PO 없음 (발주(PO) 탭 입고여부가 '입고'가 아닌 PO 기준)")
+else:
+    st.caption("발주(PO) 탭에서 입고여부가 '입고'가 아닌 PO — 차수별로 따로 표시(합산 안 함). "
+               "열 이름 = #번호 발주일")
+    for fam in EVEN_FAMILIES:
+        opts = [o for o in poomgo.EVEN_OPTION_ORDER if _family(o) == fam]
+        fam_pos = [p for p in pos if any(p["수량"].get(o) for o in opts)]
+        if not fam_pos:
+            continue
+        st.markdown(f"**{fam}**")
+        rows = []
+        for o in opts:
+            row = {"품목": o[len(fam):].strip() or o}
+            for p in fam_pos:
+                row[_po_label(p)] = p["수량"].get(o) or None
+            rows.append(row)
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
+                     height=_tbl_height(len(rows)))
+    with st.expander("PO 목록"):
+        st.dataframe(pd.DataFrame([{"차수": _po_label(p), "PO명": p["PO명"],
+                                    "수량": sum(p["수량"].values()), "비고": p["비고"]}
+                                   for p in pos]),
+                     use_container_width=True, hide_index=True)
 
 st.divider()
 st.subheader("품고 입고등록")
