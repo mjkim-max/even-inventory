@@ -1,8 +1,8 @@
 """Even 재고 대시보드 (Streamlit).
 
   총재고        ← 품고 API 실시간(quantity-at)
-  미출고 주문    ← 주문캐시·Cafe24주문 탭에서 아직 안 나간 주문 (scripts/orders.py)
-  재고(가용)     = 총재고 - 미출고 주문
+  미출고        ← 주문캐시(스마트스토어+Cafe24) 발송 전 + 설문지 확정 링 송장 전 (scripts/orders.py)
+  재고(가용)     = 총재고 - 미출고
   일평균 출고량  ← 기존 Even 스프레드시트 '매출' 탭 (최근 N일 판매량 평균)
   입고등록      → 품고 receiving-sheets API
 
@@ -172,8 +172,8 @@ except Exception as e:
     st.warning(f"매출 탭을 못 읽었습니다: {e}")
 
 _src = "품고 API 실시간" if live else "품고재고 탭 스냅샷"
-_pen = "주문캐시·Cafe24주문 기준" if has_pending else "**집계 실패 — 총재고와 같음**"
-st.caption(f"총재고: {_src} · {stamp or '아직 없음'}　|　**재고 = 총재고 − 미출고 주문**({_pen})"
+_pen = "주문캐시 발송 전 + 설문지 링 송장 전" if has_pending else "**집계 실패 — 총재고와 같음**"
+st.caption(f"총재고: {_src} · {stamp or '아직 없음'}　|　**재고 = 총재고 − 미출고**({_pen})"
            f"　|　일평균 출고량: 매출 탭 최근 14일 기준")
 
 def _family_rows(fam: str):

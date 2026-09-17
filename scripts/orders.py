@@ -4,29 +4,28 @@
 13:43 지시 → 15:12 출고 건이, 그 사이 3분 간격 24회 조회에서 한 번도 안 잡힘).
 그래서 품고 화면의 '출고 후 예상재고'를 API 로 실시간 재현할 수 없다.
 
-대신 우리 주문 시트에서 아직 안 나간 주문을 세서 총재고에서 뺀다.
-품고보다 이르게(출고 지시 전, 주문 시점) 잡히므로 품고 화면 숫자와는 다를 수 있고,
-판매 가능 재고 판단에는 이쪽이 더 보수적이다.
+대신 우리 시트에서 아직 안 나간 물량을 세서 총재고에서 뺀다.
+품고보다 이르게(출고 지시 전) 잡히므로 품고 화면 숫자와는 다를 수 있다.
 
-  주문캐시     (스마트스토어) 발송일 공란 + 취소/반품/교환 아닌 건 → 옵션키·수량 그대로
-  Cafe24주문   주문상태 N10/N20/N21/N22(출고 전) → 상품번호·옵션값으로 옵션키 환산
+  주문캐시            발송일 공란 + 취소/반품/교환 아닌 건 → 옵션키·수량 그대로.
+                      스마트스토어 + Cafe24 가 함께 들어 있다(ring_verify 가 Cafe24주문 탭을
+                      같은 형식으로 합쳐 넣음) — Cafe24주문 탭을 따로 읽으면 이중 차감된다.
+  설문지 응답 시트1   사이즈키트 구매자가 폼으로 확정한 링 호수. 출고여부 '출고가능' +
+                      송장 열 공란 → R1 {호수} 1개씩. 품고 링 업로드·링 송장 양식과 같은 조건.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 import sheets
 
 ORDER_TAB = "주문캐시"
-CAFE24_TAB = "Cafe24주문"
+FORM_TAB = "설문지 응답 시트1"
 
-# Cafe24 출고 전 상태(= 재고를 잡아먹는 상태). N00 입금전·N30 배송중·N40 배송완료 제외,
-# C* 취소 · R* 반품 · E* 교환 제외.
-CAFE24_PENDING = {"N10", "N20", "N21", "N22"}
-# 스마트스토어: 발송일이 비었어도 아래 문구가 들어간 상태는 재고를 안 잡는다.
-NAVER_DEAD = ("취소", "반품", "교환")
-
-COLORS = {"그레이": "그레이", "브라운": "브라운", "그린": "그린"}
+# 발송일이 비었어도 아래 문구가 들어간 상태는 재고를 안 잡는다.
+DEAD_STATUS = ("취소", "반품", "교환")
+RING_SIZES = {str(n) for n in range(6, 16)}
 
 
 def _to_int(v, d: int = 0) -> int:
@@ -36,66 +35,71 @@ def _to_int(v, d: int = 0) -> int:
         return d
 
 
-def cafe24_option_key(product_no: str, product_name: str, option_text: str) -> Optional[str]:
-    """Cafe24 (상품번호, 상품명, 옵션값만) → Even 옵션키.
-
-      11 Even G2           "G2 A타입 라운드프레임|그레이"          → G2 A 그레이
-      13 G2 Clip & Pouch   "G2 B타입 스퀘어프레임|그레이"          → 클립 B 그레이
-      12 Even R1           "10|사이징 키트 없이 바로 구매"         → R1 10
-      12 Even R1           "사이징 키트 수령 후 결정 (권장)|..."   → R1 사이즈키트
-    """
-    parts = [p.strip() for p in str(option_text or "").split("|") if p.strip()]
-    if not parts:
-        return None
-    head = parts[0]
-    name = str(product_name or "")
-    pno = str(product_no or "").strip()
-
-    if pno == "12" or "R1" in name:
-        if head.isdigit():
-            return f"R1 {int(head)}"
-        if "사이징" in head or "키트" in head:
-            return "R1 사이즈키트"
-        return None
-
-    fam = "클립" if (pno == "13" or "clip" in name.lower()) else "G2"
-    kind = "A" if "A타입" in head else ("B" if "B타입" in head else None)
-    color = next((c for c in COLORS if any(c in p for p in parts[1:])), None)
-    if not kind or not color:
-        return None
-    return f"{fam} {kind} {color}"
+def _add(pending: Dict[str, int], opt: str, qty: int) -> None:
+    pending[opt] = pending.get(opt, 0) + qty
 
 
-def _rows(sh, tab: str) -> List[Dict[str, Any]]:
-    grid = sh.worksheet(tab).get_all_values()
+def _grid(sh, tab: str) -> List[List[str]]:
+    return sh.worksheet(tab).get_all_values()
+
+
+def _order_pending(grid: List[List[str]], pending: Dict[str, int]) -> None:
     if len(grid) < 2:
-        return []
+        return
     head = grid[0]
-    return [dict(zip(head, r + [""] * (len(head) - len(r)))) for r in grid[1:] if any(r)]
+    for r in grid[1:]:
+        row = dict(zip(head, r + [""] * (len(head) - len(r))))
+        if str(row.get("발송일", "")).strip():
+            continue
+        if any(x in str(row.get("주문상태", "")) for x in DEAD_STATUS):
+            continue
+        opt = str(row.get("옵션키", "")).strip()
+        if opt:
+            _add(pending, opt, _to_int(row.get("수량"), 0))
+
+
+def _form_pending(grid: List[List[str]], pending: Dict[str, int]) -> None:
+    """설문지: 출고가능 + 송장 공란 → R1 {호수}.
+
+    송장 열은 머리글이 비어 있어서 '송장입력일시' 바로 왼쪽 열로 찾는다
+    (ring_verify 도 같은 배치: 송장 N · 송장입력일시 O). 열이 밀려도 따라간다.
+    """
+    if len(grid) < 2:
+        return
+    head = [h.strip() for h in grid[0]]
+    size_i = next((i for i, h in enumerate(head) if "호수" in h), -1)
+    verdict_i = head.index("출고여부") if "출고여부" in head else -1
+    ts_i = head.index("송장입력일시") if "송장입력일시" in head else -1
+    if min(size_i, verdict_i, ts_i) < 1:
+        raise RuntimeError(f"{FORM_TAB}: 호수/출고여부/송장입력일시 열을 못 찾음 — 머리글 확인")
+    ship_i = ts_i - 1
+    for r in grid[1:]:
+        r = r + [""] * (len(head) - len(r))
+        if not r[verdict_i].strip().startswith("출고가능"):
+            continue
+        if r[ship_i].strip():
+            continue
+        size = "".join(re.findall(r"\d+", r[size_i]))
+        if size in RING_SIZES:
+            _add(pending, f"R1 {size}", 1)
 
 
 def pending_out(sheet_id: str, creds_info: Optional[Dict[str, Any]] = None,
-                order_tab: str = ORDER_TAB, cafe24_tab: str = CAFE24_TAB) -> Dict[str, int]:
-    """Even 옵션키 → 아직 안 나간 주문 수량. 두 탭 중 하나가 없으면 그쪽만 건너뛴다."""
-    # 예외는 삼키지 않는다 — 탭 이름·헤더가 바뀌면 조용히 0 이 되는 게 제일 위험하다.
+                order_tab: str = ORDER_TAB, form_tab: str = FORM_TAB) -> Dict[str, int]:
+    """Even 옵션키 → 아직 안 나간 수량(주문캐시 + 설문지 확정 링)."""
+    # 예외는 삼키지 않는다 — 탭 이름·머리글이 바뀌면 조용히 0 이 되는 게 제일 위험하다.
     sh = sheets.open_sheet(sheet_id, creds_info or None)
     pending: Dict[str, int] = {}
-
-    for r in _rows(sh, order_tab):
-        if str(r.get("발송일", "")).strip():
-            continue
-        if any(x in str(r.get("주문상태", "")) for x in NAVER_DEAD):
-            continue
-        opt = str(r.get("옵션키", "")).strip()
-        if opt:
-            pending[opt] = pending.get(opt, 0) + _to_int(r.get("수량"), 0)
-
-    for r in _rows(sh, cafe24_tab):
-        if str(r.get("주문상태", "")).strip() not in CAFE24_PENDING:
-            continue
-        opt = cafe24_option_key(r.get("상품번호"), r.get("상품명"),
-                                r.get("옵션값만") or r.get("옵션"))
-        if opt:
-            pending[opt] = pending.get(opt, 0) + _to_int(r.get("수량"), 0)
-
+    _order_pending(_grid(sh, order_tab), pending)
+    _form_pending(_grid(sh, form_tab), pending)
     return pending
+
+
+def pending_by_source(sheet_id: str, creds_info: Optional[Dict[str, Any]] = None) -> Dict[str, Dict[str, int]]:
+    """확인용 — 소스별로 나눠서."""
+    sh = sheets.open_sheet(sheet_id, creds_info or None)
+    a: Dict[str, int] = {}
+    b: Dict[str, int] = {}
+    _order_pending(_grid(sh, ORDER_TAB), a)
+    _form_pending(_grid(sh, FORM_TAB), b)
+    return {ORDER_TAB: a, FORM_TAB: b}
