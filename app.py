@@ -230,12 +230,14 @@ for fam, o in opt_rows:
     prev_fam = fam
     acc = cur
     for i, p in enumerate(slots):
-        q = p["수량"].get(o) if p else None
+        if p is None:                  # 이 차수 PO 자체가 없음 → 둘 다 빈칸
+            t_po[i].append({"발주수량": None, "입고후재고": None})
+            continue
+        q = p["수량"].get(o)
         if q:
             acc += q
-            t_po[i].append({"발주수량": q, "입고후재고": acc})
-        else:                          # PO 없음 / 이 품목 발주 없음 → 둘 다 빈칸
-            t_po[i].append({"발주수량": None, "입고후재고": None})
+        # 이 PO 에 해당 품목 발주가 없으면 발주수량만 빈칸, 입고후재고는 이전 값 유지
+        t_po[i].append({"발주수량": q or None, "입고후재고": acc})
 
 h = _tbl_height(len(opt_rows))
 c0, *c_po = st.columns([3, 2, 2, 2])
